@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# n8nlike
 
-## Getting Started
+A visual, node-based workflow automation tool built as an n8n-inspired project.
 
-First, run the development server:
+## Features (MVP)
+
+- **Drag & drop node canvas** powered by React Flow (`@xyflow/react`)
+- Core node types:
+  - **Manual Trigger** — start a workflow with seed data
+  - **Set** — assign/transform data (supports simple `{{ $json.path }}` expressions)
+  - **HTTP Request** — call external APIs
+  - **IF** — branch with true/false output ports
+  - **Code** — run inline JavaScript
+- Real execution engine that runs nodes in order and passes data between them
+- Live execution log + final output panel
+- Local persistence + Import/Export of workflows as JSON
+- Fully client-side (no backend required for MVP)
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Drag nodes from the left palette onto the canvas (or click them)
+2. Connect nodes by dragging from the right handle to the left handle of the next node
+3. Click a node to edit its parameters on the right panel
+4. Click **Execute Workflow**
+5. View step-by-step results in the Execution Log
 
-## Learn More
+### Example flows
 
-To learn more about Next.js, take a look at the following resources:
+- Trigger → Set (enrich data) → HTTP Request
+- Trigger → Set → IF (branch) → different downstream nodes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `lib/types.ts` — core domain types
+- `lib/nodes.ts` — node definitions + registry (easy to extend)
+- `lib/execution.ts` — the DAG execution engine
+- `app/page.tsx` — full visual editor UI
 
-## Deploy on Vercel
+## Next steps ideas
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Backend + database (save workflows remotely)
+- Webhook trigger node + scheduling
+- Better expression language (`$json`, `$input`, etc.)
+- More nodes (email, database, AI, loops, merge, etc.)
+- Authentication + multi-workflow management
+- Error handling / retries / execution history
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Built with Next.js + TypeScript + React Flow.
