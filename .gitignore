@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# n8nlike backend data (persistent store)
+data/
+data/*.json
+data/*.json.tmp
+
