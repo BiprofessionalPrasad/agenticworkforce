@@ -45,4 +45,13 @@ data/
 data/*.json
 data/*.json.tmp
 
+# Reports, build artifacts, temps, and tests (not for source control)
+PROJECT_STATUS.md
+QA_REPORT.md
+TESTING_REPORT.md
+build-check.txt
+build.log
+scripts/temp-*
+tests/
+
 
