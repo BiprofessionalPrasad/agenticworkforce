@@ -31,7 +31,7 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
   httpRequest: {
     type: "httpRequest",
     label: "HTTP Request",
-    description: "Make an HTTP call",
+    description: "Make an HTTP call (real, with auth via credential or params: apiKey, basic, oauth)",
     icon: "Globe",
     color: "#3b82f6",
     inputs: 1,
@@ -42,7 +42,7 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
       headers: {},
       body: null,
       timeoutMs: 10000,
-      // Engine supports: retries: 2, continueOnFail: true
+      // credentialId supported for auth
     },
   },
   if: {
@@ -88,7 +88,7 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
   scheduleTrigger: {
     type: "scheduleTrigger",
     label: "Schedule Trigger",
-    description: "Cron / interval trigger (simulated)",
+    description: "Cron / interval trigger (real server-side when active)",
     icon: "Timer",
     color: "#6366f1",
     inputs: 0,
@@ -96,27 +96,43 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
     defaultParameters: {
       schedule: "*/5 * * * *",
       interval: "5m",
-      description: "Runs every 5 minutes (simulated on execute)",
+      description: "Real cron when workflow is active + saved to server",
+    },
+  },
+  formTrigger: {
+    type: "formTrigger",
+    label: "Form Trigger",
+    description: "Custom form / HTTP form submit trigger",
+    icon: "FileText",
+    color: "#14b8a6",
+    inputs: 0,
+    outputs: ["main"],
+    defaultParameters: {
+      fields: ["name", "email", "message"],
+      description: "Accepts POSTed form data at /api/forms/{workflowId}",
+      requireAuth: false,
     },
   },
   aiLlm: {
     type: "aiLlm",
     label: "AI / LLM",
-    description: "Mock AI / LLM call with prompt",
+    description: "Real LLM call (OpenAI + basic tool calling + expr). Uses credential or OPENAI_API_KEY",
     icon: "Bot",
     color: "#a855f7",
     inputs: 1,
     outputs: ["main"],
     defaultParameters: {
       prompt: "Analyze the input and return a short summary plus a sentiment score between -1 and 1.",
-      model: "mock-llm-v1",
+      model: "gpt-4o-mini",
       temperature: 0.7,
+      // tools: [...] for basic tool calling (see editor)
+      // credentialId: "cred_xxx" or apiKey inline for direct
     },
   },
   database: {
     type: "database",
     label: "Database",
-    description: "Key/value store (localStorage)",
+    description: "Key/value store (localStorage client / memory; supports expr + credential for future DBs)",
     icon: "Database",
     color: "#14b8a6",
     inputs: 1,
@@ -130,15 +146,17 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
   email: {
     type: "email",
     label: "Email",
-    description: "Send mock email (logs it)",
+    description: "Send real email (Resend API if key/credential; else logs). Supports expressions + credentialId",
     icon: "Mail",
     color: "#ef4444",
     inputs: 1,
     outputs: ["main"],
     defaultParameters: {
       to: "recipient@example.com",
+      from: "onboarding@resend.dev",
       subject: "Workflow notification",
       body: "Hello, here is the data: {{ $json }}",
+      // apiKey or credentialId (use "apiKey" or "generic" type)
     },
   },
   loop: {
@@ -164,6 +182,47 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
     outputs: ["main"],
     defaultParameters: {
       strategy: "combine", // combine | array | firstNonNull
+    },
+  },
+  subWorkflow: {
+    type: "subWorkflow",
+    label: "Sub-workflow",
+    description: "Run another workflow (basic reference)",
+    icon: "GitBranch",
+    color: "#64748b",
+    inputs: 1,
+    outputs: ["main"],
+    defaultParameters: {
+      workflowId: "", // reference to another wf id
+      note: "Basic subflow: input passed through; ref only",
+    },
+  },
+  telegram: {
+    type: "telegram",
+    label: "Telegram",
+    description: "Send Telegram message (real via Bot API; supports credentialId or botToken)",
+    icon: "Send",
+    color: "#229ED9",
+    inputs: 1,
+    outputs: ["main"],
+    defaultParameters: {
+      chatId: "{{ $json.chatId || '' }}",
+      text: "Workflow update: {{ $json }}",
+      // botToken via param or credential (apiKey type), or TELEGRAM_BOT_TOKEN env
+    },
+  },
+  slack: {
+    type: "slack",
+    label: "Slack",
+    description: "Send Slack message (webhook URL or token; credential supported)",
+    icon: "MessageSquare",
+    color: "#E01E5A",
+    inputs: 1,
+    outputs: ["main"],
+    defaultParameters: {
+      channel: "#general",
+      text: "n8nlike: {{ $json.message || 'update' }}",
+      // webhookUrl or apiToken via credential
     },
   },
 };

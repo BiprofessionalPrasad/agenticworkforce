@@ -6,11 +6,22 @@ export type NodeType =
   | "code"
   | "webhookTrigger"
   | "scheduleTrigger"
+  | "formTrigger"
   | "aiLlm"
   | "database"
   | "email"
   | "loop"
-  | "merge";
+  | "merge"
+  | "subWorkflow"
+  | "telegram"
+  | "slack";
+
+/** Auth User (for multi-tenancy) */
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+}
 
 /**
  * n8n-like data item. Workflows pass arrays of items between nodes.
@@ -38,13 +49,28 @@ export interface WorkflowEdge {
   targetHandle?: string | null;
 }
 
+export interface WorkflowVersion {
+  version: number;
+  name?: string;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  savedAt: string;
+}
+
 export interface Workflow {
   id: string;
   name: string;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
+  userId?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** Whether the workflow is active/published for triggers and scheduling (server-side) */
+  active?: boolean;
+  /** Draft vs Published for versioning feature */
+  isPublished?: boolean;
+  /** Version history (new) */
+  versions?: WorkflowVersion[];
 }
 
 export interface NodeExecutionResult {
@@ -96,14 +122,43 @@ export interface NodeDefinition {
   defaultParameters: Record<string, any>;
 }
 
-// For backend persistence
+// Credentials / Connections Management (CRED-001)
+// Clean single definitions. data holds decrypted values at runtime (plain for MVP; future: encrypt server-side).
+export type CredentialType = "apiKey" | "basicAuth" | "oauth2" | "generic";
+
+export interface Credential {
+  id: string;
+  name: string;
+  type: CredentialType;
+  /** Runtime data e.g. { apiKey: "...", username: "...", password: "..." }. 
+   *  Note: For production use secure storage (never plain in prod JSON). */
+  data?: Record<string, any>;
+  encryptedData?: string;
+  forNodeTypes?: string[];
+  platform?: string; // e.g. "http", "telegram", "openai", "slack"
+  userId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// Credentials API response shapes (deduped)
+export interface CredentialListResponse {
+  credentials: Credential[];
+}
+
+export interface CredentialResponse {
+  credential: Credential;
+}
+
+// For backend persistence (single def)
 export interface StoredExecution extends ExecutionResult {
   id: string;
   workflowId: string;
   workflowName?: string;
+  userId?: string;
 }
 
-// Simple API response shapes (shared)
+// Simple shared API response shapes (single canonical def)
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;

@@ -8,13 +8,17 @@ A visual, node-based workflow automation tool built as an n8n-inspired project.
 - Core node types:
   - **Manual Trigger** — start a workflow with seed data
   - **Set** — assign/transform data (supports simple `{{ $json.path }}` expressions)
-  - **HTTP Request** — call external APIs
+  - **HTTP Request** — call external APIs (real + auth via credentials)
   - **IF** — branch with true/false output ports
   - **Code** — run inline JavaScript
-- Real execution engine that runs nodes in order and passes data between them
+  - **AI / LLM** — real OpenAI (with credential / env key)
+  - **Email** — real via Resend (or log fallback)
+  - **Telegram / Slack** — real send via APIs
+- Real execution engine that runs nodes in order and passes data between them (client + server)
 - Live execution log + final output panel
 - Local persistence + Import/Export of workflows as JSON
 - Fully client-side (no backend required for MVP)
+- Workflow versioning (history + restore), Draft/Published state, curated Templates gallery (importable), basic Sub-workflow node + Convert action (High Priority #6)
 
 ## Getting started
 
@@ -47,11 +51,10 @@ Open http://localhost:3000
 
 ## Next steps ideas
 
-- Backend + database (save workflows remotely)
-- Webhook trigger node + scheduling
-- Better expression language (`$json`, `$input`, etc.)
-- More nodes (email, database, AI, loops, merge, etc.)
-- Authentication + multi-workflow management
-- Error handling / retries / execution history
+- Full Credentials UI polish + OAuth flows
+- Real scheduling + production triggers
+- RAG / tool-calling agents in AI node
+- Postgres persistence
+- Error handling / retries / execution history (many done)
 
 Built with Next.js + TypeScript + React Flow.
