@@ -24,6 +24,7 @@ import "@xyflow/react/dist/style.css";
 import { Play, Save, Trash2, Plus, Download, Upload, RefreshCw, History, Clock, RotateCcw, X, ChevronDown, ChevronUp, Server, HardDrive, Webhook, Timer, Bot, Database, Mail, Repeat, Merge, Pencil, Code, Info, Loader, CircleCheck, CircleX, Search, Maximize2, LayoutDashboard, Circle, Undo2, Redo2, Globe, GitBranch } from "lucide-react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
+import dynamic from "next/dynamic";
 
 import { Workflow, WorkflowNode, WorkflowEdge, ExecutionResult, NodeType, ExecutionRecord } from "../lib/types";
 import { nodeDefinitions, nodeTypesList, getNodeDefinition } from "../lib/nodes";
@@ -44,13 +45,12 @@ const defaultWorkflow: Workflow = {
   edges: [],
 };
 
-export const dynamic = "force-dynamic";
+function N8nlike() {
+  const [isClient, setIsClient] = useState(false);
 
-export default function N8nlike() {
-  // Prevent ReactFlow (and other browser-only libs) from running during server prerender
-  if (typeof window === "undefined") {
-    return <div className="flex h-screen items-center justify-center bg-[#0f1115] text-[#8a909c]">Loading n8nlike editor…</div>;
-  }
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const [workflow, setWorkflow] = useState<Workflow>(defaultWorkflow);
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>([]);
@@ -606,7 +606,7 @@ export default function N8nlike() {
 
   const lastExecution = executions[0] || null;
 
-  // Multi-select handling for polish
+  // Multi-select handling for polish - now safe because whole N8nlike is under ReactFlowProvider (see dynamic wrapper)
   useOnSelectionChange({
     onChange: useCallback(({ nodes: selNodes, edges: selEdges }) => {
       const nIds = selNodes.map((n: any) => n.id);
@@ -1326,6 +1326,14 @@ export default function N8nlike() {
 
   const currentWorkflowForExport = { ...workflow, nodes, edges };
 
+  if (!isClient) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#0f1115] text-[#8a909c]">
+        Loading n8nlike editor…
+      </div>
+    );
+  }
+
   return (
     <div className="n8nlike flex h-screen flex-col overflow-hidden bg-[#0f1115] text-[#e6e8ec]">
       {/* Top Bar */}
@@ -1542,53 +1550,51 @@ export default function N8nlike() {
 
         {/* Canvas */}
         <div className="flex-1 relative" onDragOver={onDragOver} onDrop={onDrop}>
-          <ReactFlowProvider>
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeClick={onNodeClick}
-              nodeTypes={nodeTypes}
-              onInit={setRfInstance}
-              fitView
-              proOptions={{ hideAttribution: true }}
-              className={`bg-[#0f1115] ${isRunning ? "executing" : ""}`}
-            >
-              <Background color="#232831" gap={18} />
-              <Controls />
-              <MiniMap nodeStrokeWidth={2} nodeColor="#3b414d" maskColor="#0f111580" />
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodeClick={onNodeClick}
+            nodeTypes={nodeTypes}
+            onInit={setRfInstance}
+            fitView
+            proOptions={{ hideAttribution: true }}
+            className={`bg-[#0f1115] ${isRunning ? "executing" : ""}`}
+          >
+            <Background color="#232831" gap={18} />
+            <Controls />
+            <MiniMap nodeStrokeWidth={2} nodeColor="#3b414d" maskColor="#0f111580" />
 
-              {/* Polished controls floating inside flow */}
-              <Panel position="top-right" className="flex gap-1 m-2">
-                <button
-                  onClick={() => rfInstance?.fitView({ padding: 0.2, duration: 200 })}
-                  className="px-2 py-1 text-[10px] bg-[#1f232b] hover:bg-[#2a2f38] border border-[#2a2f38] rounded flex items-center gap-1"
-                  title="Fit view (also in controls)"
-                >
-                  <Maximize2 className="w-3 h-3" /> Fit
-                </button>
-                <button
-                  onClick={() => {
-                    pushToHistory(nodes, edges);
-                    setNodes((nds) => {
-                      const spacing = 260;
-                      return nds.map((n, i) => ({
-                        ...n,
-                        position: { x: 80 + (i % 4) * spacing, y: 100 + Math.floor(i / 4) * 140 },
-                      }));
-                    });
-                    toast.info("Auto layout applied");
-                  }}
-                  className="px-2 py-1 text-[10px] bg-[#1f232b] hover:bg-[#2a2f38] border border-[#2a2f38] rounded flex items-center gap-1"
-                  title="Simple auto layout"
-                >
-                  <LayoutDashboard className="w-3 h-3" /> Layout
-                </button>
-              </Panel>
-            </ReactFlow>
-          </ReactFlowProvider>
+            {/* Polished controls floating inside flow */}
+            <Panel position="top-right" className="flex gap-1 m-2">
+              <button
+                onClick={() => rfInstance?.fitView({ padding: 0.2, duration: 200 })}
+                className="px-2 py-1 text-[10px] bg-[#1f232b] hover:bg-[#2a2f38] border border-[#2a2f38] rounded flex items-center gap-1"
+                title="Fit view (also in controls)"
+              >
+                <Maximize2 className="w-3 h-3" /> Fit
+              </button>
+              <button
+                onClick={() => {
+                  pushToHistory(nodes, edges);
+                  setNodes((nds) => {
+                    const spacing = 260;
+                    return nds.map((n, i) => ({
+                      ...n,
+                      position: { x: 80 + (i % 4) * spacing, y: 100 + Math.floor(i / 4) * 140 },
+                    }));
+                  });
+                  toast.info("Auto layout applied");
+                }}
+                className="px-2 py-1 text-[10px] bg-[#1f232b] hover:bg-[#2a2f38] border border-[#2a2f38] rounded flex items-center gap-1"
+                title="Simple auto layout"
+              >
+                <LayoutDashboard className="w-3 h-3" /> Layout
+              </button>
+            </Panel>
+          </ReactFlow>
 
           {/* Floating hint */}
           <div className="absolute bottom-4 right-4 text-[10px] text-[#8a909c] bg-[#16181f]/80 px-2 py-0.5 rounded">
@@ -1689,9 +1695,9 @@ export default function N8nlike() {
                               <div className="mt-1 text-[#8a909c]">Output:</div>
                               <pre className="bg-black/30 p-1 rounded overflow-auto max-h-20 whitespace-pre-wrap break-all">
                                 {JSON.stringify(
-                                  Array.isArray(r.output) && r.output.length
+                                  (Array.isArray(r.output) && r.output.length
                                     ? r.output.map((it: any) => (it && it.json ? it.json : it))
-                                    : r.output,
+                                    : r.output),
                                   null,
                                   2
                                 )}
@@ -1704,9 +1710,9 @@ export default function N8nlike() {
                           {!isExpanded && !r.error && r.output != null && (
                             <div className="px-2 pb-1.5">
                               <pre className="text-[9px] text-[#8a909c] overflow-hidden max-h-8">
-                                {JSON.stringify(
+                                {(JSON.stringify(
                                   Array.isArray(r.output) && r.output[0] && r.output[0].json ? r.output[0].json : r.output
-                                )?.slice(0, 120)}...
+                                )?.slice(0, 120))}...
                               </pre>
                             </div>
                           )}
@@ -1719,9 +1725,9 @@ export default function N8nlike() {
                         <div className="text-emerald-400 text-xs mb-1">FINAL OUTPUT</div>
                         <pre className="text-[10px] bg-black/40 p-2 rounded overflow-auto max-h-28">
                           {JSON.stringify(
-                            Array.isArray(execution.finalOutput)
+                            (Array.isArray(execution.finalOutput)
                               ? execution.finalOutput.map((it: any) => (it && it.json ? it.json : it))
-                              : execution.finalOutput,
+                              : execution.finalOutput),
                             null,
                             2
                           )}
@@ -1871,3 +1877,21 @@ export default function N8nlike() {
     </div>
   );
 }
+
+const N8nlikeNoSSR = dynamic(
+  () => Promise.resolve(() => (
+    <ReactFlowProvider>
+      <N8nlike />
+    </ReactFlowProvider>
+  )),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-screen items-center justify-center bg-[#0f1115] text-[#8a909c]">
+        Loading n8nlike editor…
+      </div>
+    ),
+  }
+);
+
+export default N8nlikeNoSSR;

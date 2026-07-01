@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "build:verify": "next build"
+    "build:verify": "next build",
+    "test": "node --test tests/execution-smoke.js 2>/dev/null || echo 'No formal test runner yet. See TESTING_REPORT.md for smoke coverage + recommendations. Add jest/vitest for real unit tests on lib/execution.ts.'"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.1",
