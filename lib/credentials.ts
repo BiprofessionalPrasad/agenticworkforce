@@ -181,6 +181,18 @@ export const CREDENTIAL_TYPES = [
       { key: "value", label: "Value / Token", type: "textarea", placeholder: "JSON or secret" },
     ],
   },
+  {
+    type: "smtp" as CredentialType,
+    label: "SMTP / Email (Gmail etc)",
+    description: "For email node real SMTP sends",
+    fields: [
+      { key: "smtpHost", label: "Host", type: "text", placeholder: "smtp.gmail.com" },
+      { key: "smtpPort", label: "Port", type: "text", placeholder: "587" },
+      { key: "smtpUser", label: "User", type: "text", placeholder: "you@gmail.com" },
+      { key: "smtpPass", label: "Password / App Pass", type: "password", placeholder: "" },
+      { key: "smtpSecure", label: "Secure (true/false)", type: "text", placeholder: "false" },
+    ],
+  },
 ];
 
 // Aliases

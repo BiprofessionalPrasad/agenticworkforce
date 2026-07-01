@@ -2,10 +2,12 @@ import type { NextRequest } from "next/server";
 import { getCredential, saveCredential, deleteCredential } from "../../../../lib/storage";
 import { getCurrentUser } from "../../../../lib/session";
 import type { Credential } from "../../../../lib/types";
+import { ensureScheduler } from "../../../../lib/scheduler";
 
 // GET /api/credentials/[id]
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await ensureScheduler();
     const user = await getCurrentUser();
     if (!user) {
       return Response.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -24,6 +26,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 // PUT /api/credentials/[id] - update
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await ensureScheduler();
     const user = await getCurrentUser();
     if (!user) {
       return Response.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -52,6 +55,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 // DELETE /api/credentials/[id]
 export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await ensureScheduler();
     const user = await getCurrentUser();
     if (!user) {
       return Response.json({ success: false, error: "Unauthorized" }, { status: 401 });

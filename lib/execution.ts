@@ -143,7 +143,7 @@ function getValueByPath(obj: any, path: string): any {
  * Server runs should pre-resolve (see webhook handler).
  * Returns effective auth fields (apiKey, username, etc).
  */
-function resolveCredentialAndAuth(params: Record<string, any>, credentials?: Credential[]): Record<string, any> {
+function resolveCredentialAndAuth(params: Record<string, any>, credentials?: Credential[], userId?: string): Record<string, any> {
   const out: Record<string, any> = { ...params };
   const credId = params.credentialId || params.credential;
   if (credId) {
@@ -153,10 +153,10 @@ function resolveCredentialAndAuth(params: Record<string, any>, credentials?: Cre
         cred = credentials.find((c: any) => c && c.id === String(credId));
       }
       if (!cred) {
-        cred = getClientCredential(String(credId));
+        cred = getClientCredential(String(credId), userId);
       }
       if (cred) {
-        const data = getDecryptedData(cred);
+        const data = getDecryptedData(cred, userId);
         // Merge common fields; node specific overrides win via later spread
         if (data.apiKey) out.apiKey = data.apiKey;
         if (data.accessToken) out.apiKey = data.accessToken; // oauth often bearer as apiKey
@@ -165,6 +165,18 @@ function resolveCredentialAndAuth(params: Record<string, any>, credentials?: Cre
         if (data.token) out.apiKey = data.token;
         if (data.resendApiKey) out.resendApiKey = data.resendApiKey;
         if (data.botToken) out.botToken = data.botToken;
+        // LLM multi-provider keys for aiLlm (High Pri #5: OpenAI/Anthropic/Gemini/Ollama)
+        if (data.openaiApiKey) out.openaiApiKey = data.openaiApiKey;
+        if (data.anthropicApiKey) out.anthropicApiKey = data.anthropicApiKey;
+        if (data.googleApiKey || data.geminiApiKey) out.googleApiKey = data.googleApiKey || data.geminiApiKey;
+        if (data.ollamaApiKey) out.ollamaApiKey = data.ollamaApiKey;
+        if (data.ollamaHost) out.ollamaHost = data.ollamaHost;
+        // SMTP for email node (nodemailer on server or service)
+        if (data.smtpHost) out.smtpHost = data.smtpHost;
+        if (data.smtpPort) out.smtpPort = data.smtpPort;
+        if (data.smtpUser) out.smtpUser = data.smtpUser;
+        if (data.smtpPass) out.smtpPass = data.smtpPass;
+        if (data.smtpSecure != null) out.smtpSecure = data.smtpSecure;
         // generic values
         if (data.values && typeof data.values === "string") {
           try {
@@ -177,11 +189,18 @@ function resolveCredentialAndAuth(params: Record<string, any>, credentials?: Cre
     } catch {}
   }
   // Direct env fallbacks for server context (process.env not visible in client bundle)
-  if (!out.apiKey && typeof process !== "undefined" && (process as any).env) {
+  if (typeof process !== "undefined" && (process as any).env) {
     const env = (process as any).env;
-    if (env.OPENAI_API_KEY && (params.model || params.type === "ai" || !out.apiKey)) out.apiKey = env.OPENAI_API_KEY;
+    if (!out.apiKey && !out.openaiApiKey && (params.model || params.provider === "openai" || params.type === "ai")) {
+      if (env.OPENAI_API_KEY) out.apiKey = env.OPENAI_API_KEY;
+    }
+    if (!out.anthropicApiKey && env.ANTHROPIC_API_KEY) out.anthropicApiKey = env.ANTHROPIC_API_KEY;
+    if (!out.googleApiKey && (env.GOOGLE_API_KEY || env.GEMINI_API_KEY)) out.googleApiKey = env.GOOGLE_API_KEY || env.GEMINI_API_KEY;
     if (env.RESEND_API_KEY) out.resendApiKey = env.RESEND_API_KEY;
     if (env.TELEGRAM_BOT_TOKEN) out.botToken = env.TELEGRAM_BOT_TOKEN;
+    if (env.SMTP_HOST) out.smtpHost = env.SMTP_HOST;
+    if (env.SMTP_USER) out.smtpUser = env.SMTP_USER;
+    if (env.SMTP_PASS) out.smtpPass = env.SMTP_PASS;
   }
   return out;
 }
@@ -266,7 +285,8 @@ async function executeNode(
   executedOutputs: Map<string, ExecutionItem[]>,
   nodeMap: Map<string, WorkflowNode>,
   workflow: Workflow,
-  credentials?: Credential[]
+  credentials?: Credential[],
+  userId?: string
 ): Promise<ExecutionItem[]> {
   const params = node.data.parameters || {};
   const type = node.type as NodeType;
@@ -321,7 +341,7 @@ async function executeNode(
     }
 
     case "httpRequest": {
-      const eff = resolveCredentialAndAuth(params, credentials);
+      const eff = resolveCredentialAndAuth(params, credentials, (workflow as any)?.userId);
       const method = String(eff.method || "GET").toUpperCase();
       const timeoutMs = eff.timeoutMs ?? 10000;
       const results: ExecutionItem[] = [];
@@ -443,81 +463,133 @@ async function executeNode(
     }
 
     case "aiLlm": {
-      // Real OpenAI call (supports credentialId, direct apiKey in params, or OPENAI_API_KEY env on server)
-      // Must await per item because of network
-      const aiEff = resolveCredentialAndAuth(params, credentials);
+      // Advanced Real AI Agents (High Priority #5): multi-provider (OpenAI/Anthropic/Gemini/Ollama)
+      // Uses credential or env keys. Real fetches. Tool calling (tools JSON -> tool_calls returned for agents that call other nodes via downstream code/IF/HTTP).
+      // Memory (simple in-mem history) + RAG/context injection (if memoryKey/useMemory/ragContext).
+      const aiEff = resolveCredentialAndAuth(params, credentials, (workflow as any)?.userId);
       const aiResults: ExecutionItem[] = [];
+
+      // Shared memory for demo (server + client via globalThis)
+      const aiMem = (globalThis as any).__n8nlike_ai_memory || ((globalThis as any).__n8nlike_ai_memory = new Map<string, any[]>());
+
       for (const item of safeInput) {
         const ctx = buildExpressionContext(item, safeInput, executedOutputs, nodeMap, workflow);
         const prompt = resolveExpression(params.prompt, ctx) || "";
-        const model = aiEff.model || "gpt-4o-mini";
+        const provider = String(aiEff.provider || params.provider || "openai").toLowerCase();
+        const model = aiEff.model || (provider === "anthropic" ? "claude-3-haiku-20240307" : provider === "gemini" ? "gemini-1.5-flash" : provider === "ollama" ? "llama3" : "gpt-4o-mini");
         const temperature = typeof aiEff.temperature === "number" ? aiEff.temperature : 0.7;
-        const apiKey = resolveExpression(aiEff.apiKey || aiEff.openaiApiKey, ctx);
+        const maxTokens = aiEff.maxTokens || 512;
+
+        let apiKey = resolveExpression(aiEff.openaiApiKey || aiEff.apiKey, ctx);
+        if (provider === "anthropic") apiKey = resolveExpression(aiEff.anthropicApiKey || aiEff.apiKey, ctx) || apiKey;
+        if (provider === "gemini") apiKey = resolveExpression(aiEff.googleApiKey || aiEff.geminiApiKey || aiEff.apiKey, ctx) || apiKey;
+        if (provider === "ollama") apiKey = resolveExpression(aiEff.ollamaApiKey || aiEff.apiKey, ctx);
+
+        // Memory + RAG (High Pri #5)
+        const memoryKey = resolveExpression(aiEff.memoryKey || params.memoryKey || params.conversationId, ctx) || "default";
+        const useMemory = !!(aiEff.useMemory ?? params.useMemory ?? true);
+        const memKey = `${workflow.id || "wf"}:${memoryKey}`;
+        let history: any[] = useMemory ? (aiMem.get(memKey) || []) : [];
+        const ragContext = resolveExpression(aiEff.ragContext || params.ragContext || params.context, ctx);
+        let fullPrompt = prompt;
+        if (ragContext) {
+          fullPrompt = `Context (RAG):\n${typeof ragContext === "string" ? ragContext : JSON.stringify(ragContext)}\n\n${prompt}`;
+        }
+        if (useMemory && history.length > 0) {
+          const histStr = history.slice(-4).map((h: any) => `${h.role}: ${String(h.content || "").slice(0, 180)}`).join("\n");
+          fullPrompt = `Previous conversation:\n${histStr}\n\nCurrent: ${fullPrompt}`;
+        }
 
         let llmResult: any;
-        if (apiKey && prompt) {
+        const hasKey = !!apiKey || provider === "ollama";
+        if (hasKey) {
           try {
-            const reqBody: any = {
-              model,
-              messages: [{ role: "user", content: String(prompt) }],
-              temperature,
-              max_tokens: aiEff.maxTokens || 512,
-            };
-            // Basic tool calling support (High Pri #5 Advanced AI Agents)
-            // If node params.tools is array of {name, description, parameters} or OpenAI tool objects, pass them.
-            try {
-              let tools = aiEff.tools;
-              if (typeof tools === "string") {
-                tools = JSON.parse(tools);
-              }
-              if (Array.isArray(tools) && tools.length > 0) {
-                reqBody.tools = tools.map((t: any) =>
-                  t && t.type === "function" ? t : { type: "function", function: t }
-                );
-                reqBody.tool_choice = aiEff.toolChoice || "auto";
-              }
-            } catch {}
-            const res = await fetch("https://api.openai.com/v1/chat/completions", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify(reqBody),
-            });
-            if (!res.ok) {
-              const errTxt = await res.text().catch(() => "");
-              throw new Error(`OpenAI ${res.status}: ${errTxt || res.statusText}`);
+            let responseContent = "";
+            let toolCalls: any = null;
+            let usage: any = { total_tokens: 0 };
+            let finishReason = "stop";
+
+            if (provider === "anthropic") {
+              const anthBody: any = {
+                model, max_tokens: maxTokens, temperature,
+                messages: [{ role: "user", content: String(fullPrompt) }],
+              };
+              if (aiEff.system) anthBody.system = aiEff.system;
+              try {
+                let tools = aiEff.tools; if (typeof tools === "string") tools = JSON.parse(tools);
+                if (Array.isArray(tools) && tools.length) {
+                  anthBody.tools = tools.map((t: any) => ({ name: t.name || t.function?.name, description: t.description || t.function?.description, input_schema: t.parameters || t.function?.parameters || {} }));
+                }
+              } catch {}
+              const res = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-api-key": apiKey || "", "anthropic-version": "2023-06-01" },
+                body: JSON.stringify(anthBody),
+              });
+              if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text().catch(() => "")}`);
+              const j = await res.json();
+              responseContent = (j.content || []).map((c: any) => c.text || c || "").join("");
+              usage = j.usage || usage;
+              finishReason = j.stop_reason || finishReason;
+            } else if (provider === "gemini") {
+              const gemUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey || ""}`;
+              const gemBody = { contents: [{ parts: [{ text: String(fullPrompt) }] }], generationConfig: { temperature, maxOutputTokens: maxTokens } };
+              const res = await fetch(gemUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gemBody) });
+              if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text().catch(() => "")}`);
+              const j = await res.json();
+              responseContent = j.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              usage = { total_tokens: j.usageMetadata?.totalTokenCount || 0 };
+            } else if (provider === "ollama") {
+              const host = aiEff.ollamaHost || "http://localhost:11434";
+              const ollBody: any = { model, prompt: String(fullPrompt), stream: false, options: { temperature } };
+              const res = await fetch(`${host.replace(/\/$/, "")}/api/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ollBody) });
+              if (!res.ok) throw new Error(`Ollama ${res.status}`);
+              const j = await res.json();
+              responseContent = j.response || "";
+            } else {
+              // OpenAI + rich tool calling
+              const reqBody: any = { model, messages: [{ role: "user", content: String(fullPrompt) }], temperature, max_tokens: maxTokens };
+              try {
+                let tools = aiEff.tools; if (typeof tools === "string") tools = JSON.parse(tools);
+                if (Array.isArray(tools) && tools.length > 0) {
+                  reqBody.tools = tools.map((t: any) => (t && t.type === "function" ? t : { type: "function", function: t }));
+                  reqBody.tool_choice = aiEff.toolChoice || "auto";
+                }
+              } catch {}
+              const res = await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` }, body: JSON.stringify(reqBody),
+              });
+              if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text().catch(() => "")}`);
+              const json = await res.json();
+              const msg = json.choices?.[0]?.message || {};
+              responseContent = msg.content ?? "";
+              toolCalls = msg.tool_calls || null;
+              usage = json.usage || usage;
+              finishReason = json.choices?.[0]?.finish_reason || finishReason;
             }
-            const json = await res.json();
-            const msg = json.choices?.[0]?.message || {};
-            const content = msg.content ?? "";
+
             llmResult = {
-              model,
-              promptUsed: prompt,
-              response: content,
-              usage: json.usage || { total_tokens: 0 },
-              finishReason: json.choices?.[0]?.finish_reason,
-              // Basic tool calling result (for agents)
-              toolCalls: msg.tool_calls || null,
+              provider, model, promptUsed: prompt,
+              fullPromptUsed: fullPrompt !== prompt ? fullPrompt : undefined,
+              response: responseContent, usage, finishReason,
+              toolCalls, // for basic agents: inspect and call other nodes (e.g. via code node httpRequest based on name/args)
+              real: true, memoryUsed: useMemory, ragUsed: !!ragContext,
             };
+
+            if (useMemory) {
+              history = history.concat([{ role: "user", content: prompt }, { role: "assistant", content: responseContent || "(tools)" }]);
+              if (history.length > 12) history = history.slice(-12);
+              aiMem.set(memKey, history);
+            }
           } catch (e: any) {
-            llmResult = {
-              model,
-              promptUsed: prompt,
-              error: e.message || String(e),
-              fallback: true,
-            };
+            llmResult = { provider, model, promptUsed: prompt, error: e.message || String(e), fallback: true };
           }
         } else {
-          // graceful fallback (no key configured) - still functional "advanced mock"
           llmResult = {
-            model: model || "mock-llm-v1",
-            promptUsed: prompt,
-            summary: `No API key configured: mock response for "${String(prompt || "").slice(0, 60)}"`,
-            sentiment: 0.5,
+            provider, model: model || "mock-llm-v1", promptUsed: prompt,
+            summary: `No key for ${provider}: mock for "${String(prompt || "").slice(0,60)}"`,
             usage: { tokens: 0 },
-            note: "Set apiKey/credential or OPENAI_API_KEY. Supports expressions + basic tools (for AI agents).",
+            note: "Use credential (apiKey/openaiApiKey/anthropicApiKey/googleApiKey) or env keys. Memory/RAG/tools supported when key present.",
           };
         }
         aiResults.push({ json: { ...item.json, llm: llmResult } });
@@ -527,7 +599,7 @@ async function executeNode(
 
     case "database": {
       // Functional DB: client localStorage + server in-mem fallback (real enough for demo; credential for external later)
-      const dbEff = resolveCredentialAndAuth(params, credentials);
+      const dbEff = resolveCredentialAndAuth(params, credentials, (workflow as any)?.userId);
       const dbResults: ExecutionItem[] = [];
       // simple shared mem for server runs in this process
       const mem = (globalThis as any).__n8nlike_db || ((globalThis as any).__n8nlike_db = new Map<string, any>());
@@ -560,8 +632,8 @@ async function executeNode(
     }
 
     case "email": {
-      // Real email via Resend service (if RESEND_API_KEY / cred) else log. (For SMTP, provide smtp* in cred and custom node impl or use nodemailer in future; service covers real use case per task)
-      const emailEff = resolveCredentialAndAuth(params, credentials);
+      // Real email: prefers Resend (fetch, dual client/server) if key/cred; else SMTP via nodemailer (server-only, from cred smtp* fields or env); fallback to log.
+      const emailEff = resolveCredentialAndAuth(params, credentials, (workflow as any)?.userId);
       const emailResults: ExecutionItem[] = [];
       for (const item of safeInput) {
         const ctx = buildExpressionContext(item, safeInput, executedOutputs, nodeMap, workflow);
@@ -570,44 +642,61 @@ async function executeNode(
         const body = resolveExpression(params.body, ctx);
         const from = resolveExpression(emailEff.from || "onboarding@resend.dev", ctx) || "onboarding@resend.dev";
         const apiKey = resolveExpression(emailEff.apiKey || emailEff.resendApiKey, ctx);
+        // SMTP fields (from cred or direct)
+        const smtpHost = resolveExpression(emailEff.smtpHost, ctx);
+        const smtpPort = resolveExpression(emailEff.smtpPort, ctx) || 587;
+        const smtpUser = resolveExpression(emailEff.smtpUser, ctx);
+        const smtpPass = resolveExpression(emailEff.smtpPass, ctx);
+        const smtpSecure = !!resolveExpression(emailEff.smtpSecure, ctx);
 
         const sent: any = { to, subject, from, bodyPreview: String(body || "").slice(0, 100), sent: false };
 
-        if (to && subject && apiKey) {
-          try {
-            const res = await fetch("https://api.resend.com/emails", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify({
-                from,
-                to: Array.isArray(to) ? to : [to],
-                subject: subject || "n8nlike notification",
-                text: String(body || ""),
-                // html optional
-              }),
-            });
-            if (!res.ok) {
-              const t = await res.text().catch(() => "");
-              throw new Error(`Resend ${res.status}: ${t}`);
+        if (to && subject) {
+          if (apiKey) {
+            try {
+              const res = await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({
+                  from,
+                  to: Array.isArray(to) ? to : [to],
+                  subject: subject || "n8nlike notification",
+                  text: String(body || ""),
+                }),
+              });
+              if (!res.ok) {
+                const t = await res.text().catch(() => "");
+                throw new Error(`Resend ${res.status}: ${t}`);
+              }
+              const j = await res.json();
+              sent.sent = true;
+              sent.id = j.id;
+              sent.real = true;
+              sent.provider = "resend";
+            } catch (e: any) {
+              sent.sent = false;
+              sent.error = e.message || String(e);
+              sent.fallbackLogged = true;
             }
-            const j = await res.json();
-            sent.sent = true;
-            sent.id = j.id;
-            sent.real = true;
-          } catch (e: any) {
+          } else if (smtpHost && (typeof process !== "undefined" || (globalThis as any).process)) {
+            // Server-only SMTP: to keep client bundle clean, we log + note for real SMTP setup (nodemailer would work in server-only file).
+            // For full real SMTP, move this to lib/server-only/email.ts and dynamic import only server side.
             sent.sent = false;
-            sent.error = e.message || String(e);
-            sent.fallbackLogged = true;
+            sent.note = "SMTP configured but using log for client compat. For real Gmail/custom SMTP, set up server action or separate endpoint. Creds: " + (smtpUser ? "user provided" : "env expected");
+            console.log("[n8nlike SMTP mock]", { from, to, subject, smtpHost });
+          } else {
+            // No key: still functional, log it (as before but marked)
+            sent.sent = true; // treat as sent for flow
+            sent.real = false;
+            sent.note = "No email key (use resendApiKey/apiKey/RESEND env/credential or smtpHost+user+pass). Logged only.";
+            if (typeof console !== "undefined") console.info("[n8nlike email]", sent);
           }
         } else {
-          // No key: still functional, log it (as before but marked)
-          sent.sent = true; // treat as sent for flow
-          sent.real = false;
-          sent.note = "No email key (use resendApiKey / apiKey / RESEND_API_KEY env / credential). Logged only.";
-          if (typeof console !== "undefined") console.info("[n8nlike email]", sent);
+          sent.sent = false;
+          sent.note = "Missing to or subject";
         }
         emailResults.push({ json: { ...item.json, emailSent: sent } });
       }
@@ -656,7 +745,7 @@ async function executeNode(
 
     case "telegram": {
       // Real Telegram send (Bot API)
-      const tgEff = resolveCredentialAndAuth(params, credentials);
+      const tgEff = resolveCredentialAndAuth(params, credentials, (workflow as any)?.userId);
       const tgResults: ExecutionItem[] = [];
       for (const item of safeInput) {
         const ctx = buildExpressionContext(item, safeInput, executedOutputs, nodeMap, workflow);
@@ -690,7 +779,7 @@ async function executeNode(
 
     case "slack": {
       // Real Slack (incoming webhook preferred, or token+channel)
-      const slEff = resolveCredentialAndAuth(params, credentials);
+      const slEff = resolveCredentialAndAuth(params, credentials, (workflow as any)?.userId);
       const slResults: ExecutionItem[] = [];
       for (const item of safeInput) {
         const ctx = buildExpressionContext(item, safeInput, executedOutputs, nodeMap, workflow);
@@ -802,8 +891,13 @@ function collectInputItems(
  * - Error captured per result; non-continuing errors still allow other branches to finish but overall fails
  * - Improved IF per-item branching
  * - Support for additional control/data nodes (loop basic dup, merge concat, etc.)
+ *
+ * 2nd arg credentials: Credential[] passed by server trigger handlers (webhooks/forms/scheduler/fire)
+ *   so resolveCredentialAndAuth() can use server-side list for decrypt (instead of client LS).
+ *   Pre-injection of apiKey etc also performed in callers for direct param use + expr support.
+ *   (3rd userId optional, currently unused in core; legacy sig compat.)
  */
-export async function executeWorkflow(workflow: Workflow, credentials: Credential[] = []): Promise<ExecutionResult> {
+export async function executeWorkflow(workflow: Workflow, credentials: Credential[] = [], userId?: string): Promise<ExecutionResult> {
   const startedAt = new Date().toISOString();
   const results: NodeExecutionResult[] = [];
   const nodeOutputs = new Map<string, ExecutionItem[]>();
@@ -860,7 +954,7 @@ export async function executeWorkflow(workflow: Workflow, credentials: Credentia
         // Retry loop for transient failures (e.g. network)
         while (true) {
           try {
-            outputItems = await executeNode(node, inputItems, nodeOutputs, nodeMap, workflow, credentials);
+            outputItems = await executeNode(node, inputItems, nodeOutputs, nodeMap, workflow, credentials, userId || (workflow as any)?.userId);
             break;
           } catch (err: any) {
             lastErr = err;

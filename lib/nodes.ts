@@ -116,17 +116,19 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
   aiLlm: {
     type: "aiLlm",
     label: "AI / LLM",
-    description: "Real LLM call (OpenAI + basic tool calling + expr). Uses credential or OPENAI_API_KEY",
+    description: "Real LLM (OpenAI/Anthropic/Gemini/Ollama) + tool calling + memory/RAG (demo). Credential for keys.",
     icon: "Bot",
     color: "#a855f7",
     inputs: 1,
     outputs: ["main"],
     defaultParameters: {
       prompt: "Analyze the input and return a short summary plus a sentiment score between -1 and 1.",
+      provider: "openai",
       model: "gpt-4o-mini",
       temperature: 0.7,
-      // tools: [...] for basic tool calling (see editor)
-      // credentialId: "cred_xxx" or apiKey inline for direct
+      // tools: JSON array for basic agent tool calling (returns tool_calls)
+      // memoryKey/useMemory/ragContext for memory+RAG demo
+      // credentialId or provider-specific key in cred
     },
   },
   database: {
@@ -146,7 +148,7 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
   email: {
     type: "email",
     label: "Email",
-    description: "Send real email (Resend API if key/credential; else logs). Supports expressions + credentialId",
+    description: "Send real email (Resend fetch or SMTP via nodemailer from credential). Gmail/SMTP supported. expr + credentialId",
     icon: "Mail",
     color: "#ef4444",
     inputs: 1,
@@ -156,7 +158,7 @@ export const nodeDefinitions: Record<NodeType, NodeDefinition> = {
       from: "onboarding@resend.dev",
       subject: "Workflow notification",
       body: "Hello, here is the data: {{ $json }}",
-      // apiKey or credentialId (use "apiKey" or "generic" type)
+      // apiKey/resendApiKey for Resend; or smtpHost/smtpUser/smtpPass (generic/ custom cred) for SMTP
     },
   },
   loop: {

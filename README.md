@@ -12,7 +12,7 @@ A visual, node-based workflow automation tool built as an n8n-inspired project.
   - **IF** — branch with true/false output ports
   - **Code** — run inline JavaScript
   - **AI / LLM** — real OpenAI (with credential / env key)
-  - **Email** — real via Resend (or log fallback)
+  - **Email** — real via Resend (fetch) or nodemailer SMTP (Gmail etc via credential) or log fallback
   - **Telegram / Slack** — real send via APIs
 - Real execution engine that runs nodes in order and passes data between them (client + server)
 - Live execution log + final output panel

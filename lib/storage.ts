@@ -153,9 +153,12 @@ export async function createWorkflow(name: string, nodes: Workflow["nodes"] = []
   return saveWorkflow(wf);
 }
 
-export async function deleteWorkflow(id: string): Promise<boolean> {
+export async function deleteWorkflow(id: string, userId?: string): Promise<boolean> {
   const map = await readJsonFile<Record<string, Workflow>>(WORKFLOWS_FILE, {});
-  if (!map[id]) return false;
+  const wf = map[id];
+  if (!wf) return false;
+  // Enforce per-user isolation for delete (defense in depth)
+  if (userId && wf.userId && wf.userId !== userId) return false;
   delete map[id];
   await writeJsonFile(WORKFLOWS_FILE, map);
   return true;
@@ -249,27 +252,26 @@ export async function deleteCredential(id: string, userId?: string): Promise<boo
 
 // --- Users (for auth + multi-tenancy) ---
 // Stored as array for simplicity (demo)
-async function readUsers(): Promise<User & { password: string }[]> {
-  const def: (User & { password: string })[] = [];
-  return readJsonFile<(User & { password: string })[]>(USERS_FILE, def);
+async function readUsers(): Promise<any[]> {
+  return readJsonFile<any[]>(USERS_FILE, []);
 }
 
-async function writeUsers(users: (User & { password: string })[]): Promise<void> {
+async function writeUsers(users: any[]): Promise<void> {
   await writeJsonFile(USERS_FILE, users);
 }
 
-export async function getUserByEmail(email: string): Promise<(User & { password: string }) | null> {
+export async function getUserByEmail(email: string): Promise<any | null> {
   const users = await readUsers();
-  return users.find((u) => u.email.toLowerCase() === email.toLowerCase()) ?? null;
+  return users.find((u: any) => u.email.toLowerCase() === email.toLowerCase()) ?? null;
 }
 
-export async function createUser(email: string, password: string, name?: string): Promise<User> {
+export async function createUser(email: string, password: string, name?: string): Promise<any> {
   const users = await readUsers();
-  const existing = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  const existing = users.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
   if (existing) {
     throw new Error("User already exists");
   }
-  const user: User & { password: string } = {
+  const user = {
     id: `user-${uuidv4().slice(0, 10)}`,
     email: email.toLowerCase(),
     name: name || email.split("@")[0],
@@ -281,7 +283,7 @@ export async function createUser(email: string, password: string, name?: string)
   return safe;
 }
 
-export async function validateUser(email: string, password: string): Promise<User | null> {
+export async function validateUser(email: string, password: string): Promise<any | null> {
   const u = await getUserByEmail(email);
   if (!u) return null;
   if (u.password !== password) return null; // DEMO: plain compare
@@ -289,16 +291,16 @@ export async function validateUser(email: string, password: string): Promise<Use
   return safe;
 }
 
-export async function getUserById(id: string): Promise<User | null> {
+export async function getUserById(id: string): Promise<any | null> {
   const users = await readUsers();
-  const u = users.find((x) => x.id === id);
+  const u = users.find((x: any) => x.id === id);
   if (!u) return null;
   const { password: _p, ...safe } = u;
   return safe;
 }
 
 // Optional: seed a demo user on first use (for easy testing)
-export async function ensureDemoUser(): Promise<User> {
+export async function ensureDemoUser(): Promise<any> {
   const demoEmail = "demo@n8nlike.local";
   let u = await getUserByEmail(demoEmail);
   if (!u) {

@@ -43,6 +43,8 @@ export async function POST(request: NextRequest) {
       error: body.error,
       startedAt: body.startedAt,
       finishedAt: body.finishedAt,
+      // Persist snapshot for server + webhook + schedule runs to enable replay/re-run from History (fixes integration gap)
+      workflowSnapshot: body.workflowSnapshot || undefined,
     };
 
     const saved = await saveExecution(execInput as any, user.id);

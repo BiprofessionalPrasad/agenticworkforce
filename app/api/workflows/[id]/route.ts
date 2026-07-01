@@ -77,9 +77,9 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
     }
     const { unregisterSchedule } = await import("../../../../lib/scheduler");
     unregisterSchedule(id);
-    const ok = await deleteWorkflow(id);
+    const ok = await deleteWorkflow(id, user.id);
     if (!ok) {
-      return Response.json({ success: false, error: "Workflow not found" }, { status: 404 });
+      return Response.json({ success: false, error: "Workflow not found or not owned" }, { status: 404 });
     }
     return Response.json({ success: true });
   } catch (err: any) {

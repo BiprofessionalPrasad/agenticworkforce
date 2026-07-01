@@ -28,18 +28,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const body = await request.json().catch(() => ({}));
     const overrideInput = body.input || body.seedData || body.payload || undefined;
 
-    // Auth check for webhookTrigger (enhanced)
+    // Auth check for webhookTrigger (enhanced: supports secret on node OR via credentialId for production auth)
     const webhookNode = wf.nodes.find((n) => n.type === "webhookTrigger");
+    let effectiveSecret: string | undefined;
     if (webhookNode) {
-      const secret = webhookNode.data?.parameters?.secret ||
-                     webhookNode.data?.parameters?.authToken ||
-                     webhookNode.data?.parameters?.webhookSecret;
-      if (secret) {
+      const p = webhookNode.data?.parameters || {};
+      effectiveSecret = p.secret || p.authToken || p.webhookSecret;
+      const cid = p.credentialId || p.credential;
+      if (cid && !effectiveSecret) {
+        try {
+          const serverCredsForAuth = await getAllCredentials((wf as any).userId);
+          const c = serverCredsForAuth.find((cc: any) => cc.id === cid);
+          if (c) {
+            const data = decryptCredentialData((c as any).encryptedData || "");
+            effectiveSecret = data.apiKey || data.secret || data.token || data.password || data.accessToken;
+          }
+        } catch {}
+      }
+      if (effectiveSecret) {
         const provided = request.headers.get("x-webhook-secret") ||
                          request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
-                         (body as any).secret;
-        if (String(provided || "") !== String(secret)) {
-          return Response.json({ success: false, error: "Unauthorized (webhook secret mismatch)" }, { status: 401 });
+                         (body as any).secret || (body as any).token;
+        if (String(provided || "") !== String(effectiveSecret)) {
+          return Response.json({ success: false, error: "Unauthorized (webhook secret/credential mismatch)" }, { status: 401 });
         }
       }
     }
@@ -132,6 +143,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             if (data.password) p.password = data.password;
             if (data.resendApiKey) p.resendApiKey = data.resendApiKey;
             if (data.botToken) p.botToken = data.botToken;
+            if (data.smtpHost) p.smtpHost = data.smtpHost;
+            if (data.smtpPort) p.smtpPort = data.smtpPort;
+            if (data.smtpUser) p.smtpUser = data.smtpUser;
+            if (data.smtpPass) p.smtpPass = data.smtpPass;
             if (data.values && typeof data.values === "object") Object.assign(p, data.values);
           } catch {}
         }
@@ -139,11 +154,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       // Also allow direct env injection for common on server (if not in cred)
       if (!p.apiKey && process.env.OPENAI_API_KEY) p.apiKey = process.env.OPENAI_API_KEY;
       if (!p.resendApiKey && process.env.RESEND_API_KEY) p.resendApiKey = process.env.RESEND_API_KEY;
+      if (!p.botToken && process.env.TELEGRAM_BOT_TOKEN) p.botToken = process.env.TELEGRAM_BOT_TOKEN;
+      if (!p.smtpHost && process.env.SMTP_HOST) p.smtpHost = process.env.SMTP_HOST;
+      if (!p.smtpUser && process.env.SMTP_USER) p.smtpUser = process.env.SMTP_USER;
+      if (!p.smtpPass && process.env.SMTP_PASS) p.smtpPass = process.env.SMTP_PASS;
       return { ...n, data: { ...n.data, parameters: p } };
     });
     const finalWorkflowToRun: Workflow = { ...workflowToRun, nodes: resolvedNodes };
 
-    const result = await executeWorkflow(finalWorkflowToRun, serverCreds);
+    const result = await executeWorkflow(finalWorkflowToRun, serverCreds, (wf as any).userId);
 
     // Persist execution
     await saveExecution({
@@ -151,6 +170,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       workflowName: wf.name,
       userId: wf.userId,
       ...result,
+      // Include full snapshot so server-triggered execs (webhook) are replayable in History
+      workflowSnapshot: { name: wf.name, nodes: wf.nodes || [], edges: wf.edges || [] } as any,
     }, wf.userId);
 
     return Response.json({

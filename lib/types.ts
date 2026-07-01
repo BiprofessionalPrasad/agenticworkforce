@@ -39,6 +39,9 @@ export interface WorkflowNode {
     label?: string;
     parameters: Record<string, any>;
   };
+  /** For node grouping / nesting (React Flow parent-child) */
+  parentNode?: string;
+  extent?: "parent";
 }
 
 export interface WorkflowEdge {
@@ -124,7 +127,7 @@ export interface NodeDefinition {
 
 // Credentials / Connections Management (CRED-001)
 // Clean single definitions. data holds decrypted values at runtime (plain for MVP; future: encrypt server-side).
-export type CredentialType = "apiKey" | "basicAuth" | "oauth2" | "generic";
+export type CredentialType = "apiKey" | "basicAuth" | "oauth2" | "generic" | "smtp";
 
 export interface Credential {
   id: string;
@@ -156,6 +159,12 @@ export interface StoredExecution extends ExecutionResult {
   workflowId: string;
   workflowName?: string;
   userId?: string;
+  // Optional full snapshot so server execs (schedules, webhooks, forms) support History replay (was missing)
+  workflowSnapshot?: {
+    name: string;
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+  };
 }
 
 // Simple shared API response shapes (single canonical def)

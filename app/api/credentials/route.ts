@@ -2,10 +2,12 @@ import type { NextRequest } from "next/server";
 import { getAllCredentials, saveCredential, deleteCredential } from "../../../lib/storage";
 import { getCurrentUser } from "../../../lib/session";
 import type { Credential } from "../../../lib/types";
+import { ensureScheduler } from "../../../lib/scheduler";
 
 // GET /api/credentials - list current user's
 export async function GET() {
   try {
+    await ensureScheduler();
     const user = await getCurrentUser();
     if (!user) {
       return Response.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -20,6 +22,7 @@ export async function GET() {
 // POST /api/credentials - create or update (if id provided) user scoped
 export async function POST(request: NextRequest) {
   try {
+    await ensureScheduler();
     const user = await getCurrentUser();
     if (!user) {
       return Response.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -50,6 +53,7 @@ export async function POST(request: NextRequest) {
 // DELETE support for completeness
 export async function DELETE(request: NextRequest) {
   try {
+    await ensureScheduler();
     const user = await getCurrentUser();
     if (!user) {
       return Response.json({ success: false, error: "Unauthorized" }, { status: 401 });

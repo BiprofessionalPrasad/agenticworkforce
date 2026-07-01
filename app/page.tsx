@@ -13,11 +13,16 @@ import {
   Edge,
   Node,
   NodeTypes,
+  EdgeTypes,
   Handle,
   Position,
   ReactFlowProvider,
   useOnSelectionChange,
   Panel,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
+  EdgeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -91,7 +96,7 @@ function N8nlike() {
     ...(wf || {}),
     id: (wf && wf.id) || `wf-${Date.now()}`,
     name: (wf && wf.name) || "Untitled",
-    nodes: (wf && Array.isArray(wf.nodes)) ? wf.nodes : [],
+    nodes: (wf && Array.isArray(wf.nodes)) ? (wf.nodes as any[]).map((n:any) => ({...n, parentNode: n.parentNode, extent: n.extent})) : [],
     edges: (wf && Array.isArray(wf.edges)) ? wf.edges : [],
     isPublished: typeof (wf && wf.isPublished) === "boolean" ? wf.isPublished : false,
     active: typeof (wf && wf.active) === "boolean" ? wf.active : (typeof (wf && wf.isPublished) === "boolean" ? wf.isPublished : false),
@@ -234,7 +239,7 @@ function N8nlike() {
         setCredentials(creds || []);
       }
       // load client history (will be prefixed later)
-      const hist = listExecutions(currentUser?.id);
+      const hist = listExecutions(user?.id);
       setExecutions(hist);
       if (useApi) {
         const serverHist = await loadExecutionsFromApi();
@@ -778,6 +783,15 @@ function N8nlike() {
           // create default on server
           await createNewWorkflowViaApi();
         }
+        // Merge server executions (from webhooks/schedules/forms) so History tab shows them (HIGH integration gap fix)
+        const serverHist = await loadExecutionsFromApi();
+        if (serverHist.length) {
+          setExecutions((prev) => {
+            const ids = new Set(prev.map((p: any) => p.id));
+            const merged = [...serverHist.filter((s: any) => !ids.has(s.id)), ...prev];
+            return merged.slice(0, 50);
+          });
+        }
       } else {
         // original local load - per-user key for isolation
         const key = currentUser ? `n8nlike-workflow-${currentUser.id}` : "n8nlike-workflow";
@@ -935,8 +949,9 @@ function N8nlike() {
     [setEdges, pushToHistory, nodes, edges]
   );
 
-  // Edge insert button (Future #7): click any edge to insert a node in the middle (re-wires)
-  const onEdgeClick = useCallback((event: any, edge: any) => {
+  // Extracted insert logic for edge + buttons and click (#7)
+  // function decl (hoisted) so CustomEdge/onEdgeClick can close over it without TDZ regardless of source order
+  function insertNodeOnEdge(edge: any) {
     const srcNode = (nodes as any[]).find((n: any) => n.id === edge.source);
     const tgtNode = (nodes as any[]).find((n: any) => n.id === edge.target);
     if (!srcNode || !tgtNode) return;
@@ -960,8 +975,50 @@ function N8nlike() {
       ];
     });
     setSelectedNodeId(newId);
-    toast.success("Node inserted on edge (Set). Click edge to insert more.");
-  }, [nodes, edges, pushToHistory, setNodes, setEdges]);
+    toast.success("Node inserted on edge (Set). Use + buttons or click edges.");
+  }
+
+  // Custom edge with + insert button for #7 polish (visible on every connection)
+  const CustomEdge = useCallback((props: EdgeProps) => {
+    const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style = {}, markerEnd } = props;
+    const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+    const onPlus = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const edge = (edges as any[]).find((e: any) => e.id === id);
+      if (edge) insertNodeOnEdge(edge);
+    };
+    return (
+      <>
+        <BaseEdge path={edgePath} markerEnd={markerEnd} style={{ ...style, stroke: "#5c8df6", strokeWidth: 2 }} />
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              zIndex: 10,
+              pointerEvents: "all",
+            }}
+            className="nodrag nopan"
+          >
+            <button
+              onClick={onPlus}
+              title="Insert node on this edge"
+              className="w-[15px] h-[15px] rounded-full bg-[#5c8df6] hover:bg-white text-black text-[11px] font-bold leading-[13px] flex items-center justify-center border border-[#0f1115] shadow-sm active:scale-90 transition"
+            >
+              +
+            </button>
+          </div>
+        </EdgeLabelRenderer>
+      </>
+    );
+  }, [edges, insertNodeOnEdge]);
+
+  const edgeTypes: EdgeTypes = useMemo(() => ({ default: CustomEdge }), [CustomEdge]);
+
+  // Edge insert button (Future #7): click any edge OR use + button on custom edge
+  const onEdgeClick = useCallback((event: any, edge: any) => {
+    insertNodeOnEdge(edge);
+  }, [insertNodeOnEdge]);
 
   // Context menu stub handlers (typed to match React Flow expectations)
   const closeContext = () => setContextMenu(null);
@@ -984,13 +1041,35 @@ function N8nlike() {
     if (!cm) return;
     pushToHistory(nodes, edges);
     if (action === "add-set") {
-      const pos = { x: 180 + Math.random() * 120, y: 140 + Math.random() * 80 };
+      const pos = { x: (cm.x - 200) / 1.2 || 180 + Math.random() * 120, y: (cm.y - 120) / 1.2 || 140 + Math.random() * 80 };
       addNode("set", pos);
     } else if (action === "add-if") {
-      const pos = { x: 220 + Math.random() * 100, y: 160 };
+      const pos = { x: (cm.x - 200) / 1.2 || 220 + Math.random() * 100, y: (cm.y - 120) / 1.2 || 160 };
       addNode("if", pos);
+    } else if (action === "add-http") {
+      const pos = { x: (cm.x - 220) / 1.2 || 260, y: (cm.y - 100) / 1.2 || 180 };
+      addNode("httpRequest", pos);
+    } else if (action === "add-code") {
+      const pos = { x: (cm.x - 200) / 1.2 || 300, y: (cm.y - 140) / 1.2 || 200 };
+      addNode("code", pos);
+    } else if (action === "group") {
+      // group using multi-select state (context may target 1, fall back to selected)
+      closeContext();
+      groupSelectedNodes();
+      return;
+    } else if (action === "ungroup" && cm.nodeId) {
+      // basic ungroup: move children out by clearing parent/extent and offsetting
+      const groupN = (nodes as any[]).find((n: any) => n.id === cm.nodeId);
+      const children = (nodes as any[]).filter((n: any) => n.parentNode === cm.nodeId);
+      if (children.length) {
+        const offsetX = (groupN?.position?.x || 0) + 20;
+        const offsetY = (groupN?.position?.y || 0) + 60;
+        setNodes((nds: any[]) => nds.map(n => n.parentNode === cm.nodeId ? { ...n, parentNode: undefined, extent: undefined, position: { x: n.position.x + offsetX, y: n.position.y + offsetY } } : n ).filter(n => n.id !== cm.nodeId));
+      } else {
+        setNodes(nds => (nds as any[]).filter(n=>n.id!==cm.nodeId));
+      }
     } else if (action === "layout") {
-      // trigger layout (re-uses button logic inline)
+      // trigger layout (re-uses button logic inline) - improved spacing
       const nodeList = nodes as any[];
       const edgeList = edges as any[];
       const adj = new Map<string, string[]>(); const indeg = new Map<string, number>();
@@ -1001,8 +1080,8 @@ function N8nlike() {
       const vis = new Set<string>();
       while(q.length){ levs[l]=[...q]; const nq:string[]=[]; q.forEach(id=>{ vis.add(id); (adj.get(id)||[]).forEach(t=>{ indeg.set(t,(indeg.get(t)||0)-1); if((indeg.get(t)||0)===0) nq.push(t);}); }); q=nq; l++; }
       const rem = nodeList.filter(n=>!vis.has(n.id)).map(n=>n.id); if(rem.length) levs.push(rem);
-      const pmap: any = {}; levs.forEach((lv,li)=> lv.forEach((id,ii)=> pmap[id]={x:60+li*230, y:60+ii*95}));
-      setNodes(nds => (nds as any[]).map(n=>({...n, position: pmap[n.id]||n.position})));
+      const pmap: any = {}; levs.forEach((lv,li)=> lv.forEach((id,ii)=> pmap[id]={x:80 + li*260, y:80 + ii*110 }));
+      setNodes(nds => (nds as any[]).map(n=>({...n, position: pmap[n.id]||n.position, parentNode: undefined, extent: undefined }))); // ungroup on full relayout
     } else if (action === "delete" && (cm.nodeId || cm.edgeId)) {
       if (cm.nodeId) setNodes(nds => (nds as any[]).filter(n=>n.id!==cm.nodeId));
       if (cm.edgeId) setEdges(eds => (eds as any[]).filter(e=>e.id!==cm.edgeId));
@@ -1039,7 +1118,7 @@ function N8nlike() {
     }, []),
   });
 
-  const addNode = useCallback((type: NodeType, position?: { x: number; y: number }) => {
+  const addNode = useCallback((type: NodeType, position?: { x: number; y: number }, parentId?: string) => {
     const def = getNodeDefinition(type);
     const newNode: WorkflowNode = {
       id: `${type}-${uuidv4().slice(0, 8)}`,
@@ -1049,12 +1128,13 @@ function N8nlike() {
         label: def.label,
         parameters: JSON.parse(JSON.stringify(def.defaultParameters)),
       },
+      ...(parentId ? { parentNode: parentId, extent: "parent" as const } : {}),
     };
 
     pushToHistory(nodes, edges);
     setNodes((nds) => [...nds, newNode]);
     setSelectedNodeId(newNode.id);
-    toast.success(`Added ${def.label}`);
+    toast.success(`Added ${def.label}${parentId ? " (grouped)" : ""}`);
   }, [nodes, edges, pushToHistory, setNodes]);
 
   // Drag from palette
@@ -1171,6 +1251,10 @@ function N8nlike() {
                   if (d.botToken) p.botToken = d.botToken;
                   if (d.username) p.username = d.username;
                   if (d.password) p.password = d.password;
+                  if (d.smtpHost) p.smtpHost = d.smtpHost;
+                  if (d.smtpPort) p.smtpPort = d.smtpPort;
+                  if (d.smtpUser) p.smtpUser = d.smtpUser;
+                  if (d.smtpPass) p.smtpPass = d.smtpPass;
                   if (d.values) {
                     const vv = typeof d.values === "string" ? (() => { try { return JSON.parse(d.values); } catch { return {}; } })() : d.values;
                     Object.assign(p, vv);
@@ -1181,7 +1265,7 @@ function N8nlike() {
             return { ...n, data: { ...n.data, parameters: p } };
           });
           const wfForExec = { ...currentWorkflow, nodes: resolvedNodesForRun };
-          result = await executeWorkflow(wfForExec, credentials);
+          result = await executeWorkflow(wfForExec, credentials, currentUser?.id);
         }
       } else {
         // Client-side: resolve credentialId -> inject apiKey etc into params for real nodes (secure local only)
@@ -1199,6 +1283,10 @@ function N8nlike() {
                 if (d.botToken) p.botToken = d.botToken;
                 if (d.username) p.username = d.username;
                 if (d.password) p.password = d.password;
+                if (d.smtpHost) p.smtpHost = d.smtpHost;
+                if (d.smtpPort) p.smtpPort = d.smtpPort;
+                if (d.smtpUser) p.smtpUser = d.smtpUser;
+                if (d.smtpPass) p.smtpPass = d.smtpPass;
                 if (d.values) {
                   const vv = typeof d.values === "string" ? (() => { try { return JSON.parse(d.values); } catch { return {}; } })() : d.values;
                   Object.assign(p, vv);
@@ -1209,7 +1297,7 @@ function N8nlike() {
           return { ...n, data: { ...n.data, parameters: p } };
         });
         const wfForExec = { ...currentWorkflow, nodes: resolvedNodesForRun };
-        result = await executeWorkflow(wfForExec, credentials);
+        result = await executeWorkflow(wfForExec, credentials, currentUser?.id);
       }
       setExecution(result);
 
@@ -1424,7 +1512,7 @@ function N8nlike() {
     setCredTestResult(null);
   };
 
-  const updateCredFormField = (key: string, value: string) => {
+  const updateCredFormField = (key: string, value: any) => {
     setCredForm((prev) => ({
       ...prev,
       data: { ...prev.data, [key]: value },
@@ -1683,6 +1771,20 @@ function N8nlike() {
         ],
       },
     },
+    {
+      name: "Webhook + Subflow Demo",
+      description: "Webhook to sub-workflow ref (uses subWorkflow node)",
+      data: {
+        name: "Webhook + Subflow Demo",
+        nodes: [
+          { id: "w1", type: "webhookTrigger", position: { x: 60, y: 140 }, data: { label: "Hook", parameters: { testPayload: { msg: "hi" } } } },
+          { id: "s1", type: "subWorkflow", position: { x: 320, y: 140 }, data: { label: "Call Sub", parameters: { workflowId: "(pick in inspector)" } } },
+        ],
+        edges: [
+          { id: "we1", source: "w1", target: "s1", sourceHandle: "main", targetHandle: "in" },
+        ],
+      },
+    },
   ];
 
   const loadTemplate = (tpl: { name: string; data: Partial<Workflow> }) => {
@@ -1778,6 +1880,19 @@ function N8nlike() {
     toast.success(`Restored v${ver.version} (${ver.savedAt.slice(0,10)})`);
   };
 
+  // Delete a specific version (UI enhancement for versioning #6)
+  const deleteVersion = (ver: WorkflowVersion) => {
+    const kept = (workflow.versions || []).filter((v: WorkflowVersion) => v.version !== ver.version || v.savedAt !== ver.savedAt);
+    const updated = { ...workflow, versions: kept };
+    setWorkflow(updated);
+    if (!useApi) {
+      localStorage.setItem(currentUser ? `n8nlike-workflow-${currentUser.id}` : "n8nlike-workflow", JSON.stringify(updated));
+    } else {
+      apiFetch(`/api/workflows/${encodeURIComponent(workflow.id)}`, { method: "PUT", body: JSON.stringify({ ...updated }) }).catch(()=>{});
+    }
+    toast.info(`Deleted v${ver.version}`);
+  };
+
   // Activation / Publishing model for triggers & scheduling (High Pri #4)
   // Uses `active` flag (server triggers + scheduler only run for active workflows). Also syncs isPublished for UI compat.
   const toggleActive = () => {
@@ -1819,6 +1934,36 @@ function N8nlike() {
       setTimeout(() => saveNewVersion(), 20);
     }
     toast.success(next ? "Published (version snapshot taken)" : "Set to Draft");
+  };
+
+  // Basic node grouping (Med-High #7) - uses RF parentNode + extent for nesting; reuses merge node as visual container to avoid new NodeType changes
+  const groupSelectedNodes = () => {
+    if (selectedNodeIds.length < 2) {
+      toast.info("Select 2+ nodes (shift+click or drag select) to create group");
+      return;
+    }
+    pushToHistory(nodes, edges);
+    const selected = (nodes as any[]).filter((n: any) => selectedNodeIds.includes(n.id));
+    const groupId = `group-${uuidv4().slice(0, 8)}`;
+    const minX = Math.min(...selected.map((n: any) => n.position.x));
+    const minY = Math.min(...selected.map((n: any) => n.position.y));
+    const groupNode: WorkflowNode = {
+      id: groupId,
+      type: "merge",
+      position: { x: minX - 12, y: minY - 44 },
+      data: { label: `Group (${selected.length})`, parameters: { strategy: "group-container" } },
+    };
+    const childNodes = selected.map((n: any) => ({
+      ...n,
+      position: { x: Math.max(8, n.position.x - minX + 18), y: Math.max(8, n.position.y - minY + 18) },
+      parentNode: groupId,
+      extent: "parent" as const,
+    }));
+    const otherNodes = (nodes as any[]).filter((n: any) => !selectedNodeIds.includes(n.id));
+    setNodes([...otherNodes, groupNode, ...childNodes]);
+    setSelectedNodeId(groupId);
+    setSelectedNodeIds([groupId]);
+    toast.success(`Grouped ${selected.length} nodes (parent container)`);
   };
 
   // Basic "Convert to sub-workflow": save current as NEW wf (via api or local list sim), then replace canvas with sub ref node
@@ -1935,7 +2080,7 @@ function N8nlike() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []); // empty deps: stable listener, actions via refs (fixes churn)
 
-  // Credential selector for nodes that support it (MVP: http, email, aiLlm)
+  // Credential selector for nodes that support it (http, email w/ smtp, aiLlm, telegram, slack, db)
   const renderCredentialSelector = (supportedTypes: CredentialType[], currentCredId?: string) => {
     const filtered = credentials.filter((c) => supportedTypes.includes(c.type));
     return (
@@ -2096,6 +2241,7 @@ function N8nlike() {
             />
           </div>
           {renderCredentialSelector(["apiKey", "basicAuth", "oauth2", "generic"], params.credentialId)}
+          <div className="text-[10px] text-[#8a909c] mt-1">Auth via cred (Bearer/Basic etc auto). Or inline: apiKey + headerName/prefix, username+password, accessToken.</div>
         </div>
       );
     }
@@ -2222,27 +2368,52 @@ function N8nlike() {
             <div className="text-xs mb-1">Prompt (supports {'{{ $json }}'} expressions)</div>
             <textarea className="w-full h-16 bg-[#0a0c10] border border-[#2a2f38] rounded p-2 text-xs" value={params.prompt || ""} onChange={(e) => updateSelectedNodeParams({ prompt: e.target.value })} />
           </div>
-          <div>
-            <div className="text-xs mb-1">Model</div>
-            <input className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.model || "gpt-4o-mini"} onChange={(e) => updateSelectedNodeParams({ model: e.target.value })} placeholder="gpt-4o-mini" />
-          </div>
           <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-xs mb-1">Provider</div>
+              <select className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.provider || "openai"} onChange={(e) => updateSelectedNodeParams({ provider: e.target.value })}>
+                <option value="openai">openai</option>
+                <option value="anthropic">anthropic</option>
+                <option value="gemini">gemini</option>
+                <option value="ollama">ollama (local)</option>
+              </select>
+            </div>
+            <div>
+              <div className="text-xs mb-1">Model</div>
+              <input className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.model || ""} onChange={(e) => updateSelectedNodeParams({ model: e.target.value })} placeholder="gpt-4o-mini / claude-3-haiku..." />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
             <div>
               <div className="text-xs mb-1">Temperature</div>
               <input type="number" step="0.1" className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.temperature ?? 0.7} onChange={(e) => updateSelectedNodeParams({ temperature: parseFloat(e.target.value) })} />
             </div>
             <div>
-              <div className="text-xs mb-1">Inline API Key (demo)</div>
+              <div className="text-xs mb-1">Max Tokens</div>
+              <input type="number" className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.maxTokens ?? 512} onChange={(e) => updateSelectedNodeParams({ maxTokens: parseInt(e.target.value) || 512 })} />
+            </div>
+            <div>
+              <div className="text-xs mb-1">Inline Key (demo)</div>
               <input type="password" className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.apiKey || ""} onChange={(e) => updateSelectedNodeParams({ apiKey: e.target.value })} placeholder="sk-..." />
             </div>
           </div>
           <div>
-            <div className="text-xs mb-1">Tools (JSON array, for basic tool calling)</div>
-            <textarea className="w-full h-14 bg-[#0a0c10] border border-[#2a2f38] rounded p-2 text-[10px] font-mono" value={typeof params.tools === "string" ? params.tools : (params.tools ? JSON.stringify(params.tools, null, 2) : "")} onChange={(e) => {
+            <div className="text-xs mb-1">Tools (JSON array for tool calling / agents)</div>
+            <textarea className="w-full h-12 bg-[#0a0c10] border border-[#2a2f38] rounded p-2 text-[10px] font-mono" value={typeof params.tools === "string" ? params.tools : (params.tools ? JSON.stringify(params.tools, null, 2) : "")} onChange={(e) => {
               try { const v = e.target.value.trim() ? JSON.parse(e.target.value) : undefined; updateSelectedNodeParams({ tools: v }); } catch { updateSelectedNodeParams({ tools: e.target.value }); }
-            }} placeholder='[{"name":"get_weather","description":"...","parameters":{"type":"object",...}}]' />
+            }} placeholder='[{"name":"lookup","description":"...","parameters":{"type":"object"}}]' />
           </div>
-          <div className="text-[10px] text-[#8a909c]">Real OpenAI call when credential or apiKey/OPENAI_API_KEY set. Supports basic tool calling (tools JSON + returns tool_calls in result for agent loops).</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-xs mb-1">Memory key (for history)</div>
+              <input className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.memoryKey || ""} onChange={(e) => updateSelectedNodeParams({ memoryKey: e.target.value })} placeholder="conv-123" />
+            </div>
+            <div className="flex items-end gap-2 text-xs">
+              <label className="flex items-center gap-1"><input type="checkbox" checked={params.useMemory !== false} onChange={(e) => updateSelectedNodeParams({ useMemory: e.target.checked })} /> useMemory</label>
+              <input className="flex-1 bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.ragContext || ""} onChange={(e) => updateSelectedNodeParams({ ragContext: e.target.value })} placeholder="RAG context or {{ $node.X.json }}" />
+            </div>
+          </div>
+          <div className="text-[10px] text-[#8a909c]">Real multi-LLM via cred/env. Tool calls returned for agent loops (use code node to dispatch to other nodes). Memory/RAG demo in-mem.</div>
           {renderCredentialSelector(["apiKey", "generic"], params.credentialId)}
         </div>
       );
@@ -2300,8 +2471,8 @@ function N8nlike() {
             <div className="text-xs mb-1">Inline Resend/API Key (demo)</div>
             <input type="password" className="w-full bg-[#0a0c10] border border-[#2a2f38] rounded px-2 py-1 text-xs" value={params.apiKey || params.resendApiKey || ""} onChange={(e) => updateSelectedNodeParams({ apiKey: e.target.value })} placeholder="re_..." />
           </div>
-          <div className="text-[10px] text-[#8a909c]">Real via Resend if key/credential; else logs. Use credentialId for secure.</div>
-          {renderCredentialSelector(["basicAuth", "oauth2", "generic", "apiKey"], params.credentialId)}
+          <div className="text-[10px] text-[#8a909c]">Real via Resend (fetch) if key/cred; or SMTP (nodemailer server) via smtp* in smtp/generic cred. Dual mode.</div>
+          {renderCredentialSelector(["basicAuth", "oauth2", "generic", "apiKey", "smtp"], params.credentialId)}
         </div>
       );
     }
@@ -2412,7 +2583,8 @@ function N8nlike() {
               </select>
             </div>
           )}
-          <div className="text-[10px] text-[#8a909c]">Basic sub-workflow ref. On execute, passes items with _subWorkflowRef marker. Use "Convert to sub-workflow" in Templates.</div>
+          <div className="text-[10px] text-[#8a909c]">Basic sub-workflow ref (High#6). On execute, passes items with _subWorkflowRef marker. Use "Convert to sub-workflow" button in left palette Templates. Reference other wf by ID; versions preserved on target.</div>
+          <button onClick={() => { if (params.workflowId) { const target = workflowsList.find(w=>w.id===params.workflowId); if(target){ loadWorkflowByIdFromApi ? loadWorkflowByIdFromApi(params.workflowId) : toast.info("Load target via list or API"); } } else toast.info("Select a workflowId first"); }} className="text-[10px] mt-1 px-2 py-0.5 bg-[#1f232b] rounded border border-[#2a2f38]">Load referenced wf (demo)</button>
         </div>
       );
     }
@@ -2548,7 +2720,23 @@ function N8nlike() {
 
           {/* API / Local mode toggle + Workflow switcher */}
           <button
-            onClick={() => setUseApi(!useApi)}
+            onClick={async () => {
+              const next = !useApi;
+              setUseApi(next);
+              if (next) {
+                // On switch to API, merge any server-side executions (webhook/schedule) into history for visibility
+                try {
+                  const serverHist = await loadExecutionsFromApi();
+                  if (serverHist.length) {
+                    setExecutions((prev) => {
+                      const ids = new Set(prev.map((p: any) => p.id));
+                      const merged = [...serverHist.filter((s: any) => !ids.has(s.id)), ...prev];
+                      return merged.slice(0, 50);
+                    });
+                  }
+                } catch {}
+              }
+            }}
             className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border transition-colors ${useApi ? "bg-[#1f232b] border-[#5c8df6] text-[#5c8df6]" : "bg-[#1f232b] border-[#2a2f38] text-[#8a909c] hover:border-[#ff6d5a]"}`}
             title={useApi ? "API mode (persisted on server)" : "Local mode (browser only)"}
           >
@@ -2829,8 +3017,11 @@ function N8nlike() {
             onNodeContextMenu={onNodeContextMenu}
             onEdgeContextMenu={onEdgeContextMenu}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onInit={setRfInstance}
             fitView
+            snapToGrid={true}
+            snapGrid={[18, 18]}
             proOptions={{ hideAttribution: true }}
             className={`bg-[#0f1115] ${isRunning ? "executing" : ""}`}
           >
@@ -2838,19 +3029,30 @@ function N8nlike() {
             <Controls />
             <MiniMap nodeStrokeWidth={2} nodeColor="#3b414d" maskColor="#0f111580" />
 
-            {/* Context menu stub (right-click on canvas/node/edge) */}
+            {/* Context menu (right-click on canvas/node/edge) - enhanced for #7 */}
             {contextMenu && (
               <div
-                style={{ left: contextMenu.x - 180, top: contextMenu.y - 60, position: 'fixed', zIndex: 60 }}
-                className="bg-[#16181f] border border-[#2a2f38] rounded shadow-lg text-xs w-40 py-1"
+                style={{ left: contextMenu.x - 180, top: contextMenu.y - 80, position: 'fixed', zIndex: 60 }}
+                className="bg-[#16181f] border border-[#2a2f38] rounded shadow-lg text-xs w-44 py-1"
                 onMouseLeave={closeContext}
               >
-                <div className="px-2 py-0.5 text-[#8a909c] border-b border-[#2a2f38] text-[10px]">Canvas Menu (stub)</div>
-                <button onClick={() => handleContextAction("add-set")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">+ Add Set node</button>
-                <button onClick={() => handleContextAction("add-if")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">+ Add If node</button>
+                <div className="px-2 py-0.5 text-[#8a909c] border-b border-[#2a2f38] text-[10px]">{contextMenu.nodeId ? "Node Menu" : contextMenu.edgeId ? "Edge Menu" : "Canvas Menu"}</div>
+                {!contextMenu.nodeId && !contextMenu.edgeId && (
+                  <>
+                    <button onClick={() => handleContextAction("add-set")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">+ Add Set</button>
+                    <button onClick={() => handleContextAction("add-if")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">+ Add If</button>
+                    <button onClick={() => handleContextAction("add-http")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">+ Add HTTP</button>
+                    <button onClick={() => handleContextAction("add-code")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">+ Add Code</button>
+                    <div className="border-t border-[#2a2f38] my-0.5" />
+                  </>
+                )}
                 <button onClick={() => handleContextAction("layout")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">↻ Auto Layout</button>
+                <button onClick={() => handleContextAction("group")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">📦 Group Selected</button>
+                {contextMenu.nodeId && (
+                  <button onClick={() => handleContextAction("ungroup")} className="w-full text-left px-3 py-1 hover:bg-[#2a2f38]">Ungroup / Remove Box</button>
+                )}
                 {(contextMenu.nodeId || contextMenu.edgeId) && (
-                  <button onClick={() => handleContextAction("delete")} className="w-full text-left px-3 py-1 hover:bg-red-950/40 text-red-400">Delete</button>
+                  <button onClick={() => handleContextAction("delete")} className="w-full text-left px-3 py-1 hover:bg-red-950/40 text-red-400">🗑 Delete</button>
                 )}
                 <button onClick={closeContext} className="w-full text-left px-3 py-1 text-[#8a909c] hover:bg-[#2a2f38]">Close</button>
               </div>
@@ -2901,10 +3103,15 @@ function N8nlike() {
                   if (remaining.length) levels.push(remaining);
                   const posMap: Record<string, {x:number,y:number}> = {};
                   levels.forEach((lev, l) => {
-                    lev.forEach((id, i) => { posMap[id] = { x: 60 + l * 230, y: 60 + i * 95 }; });
+                    // improved spacing + center clusters a bit
+                    lev.forEach((id, i) => { posMap[id] = { x: 90 + l * 260, y: 70 + i * 120 }; });
                   });
-                  setNodes((nds: any[]) => nds.map(n => ({ ...n, position: posMap[n.id] || n.position })));
-                  toast.info("Auto layout applied (layered)");
+                  setNodes((nds: any[]) => (nds as any[]).map(n => {
+                    // clear grouping on full auto-layout for clean result
+                    const p = posMap[n.id] || n.position;
+                    return { ...n, position: p, parentNode: undefined, extent: undefined };
+                  }));
+                  toast.info("Auto layout applied (layered + snap-friendly)");
                 }}
                 className="px-2 py-1 text-[10px] bg-[#1f232b] hover:bg-[#2a2f38] border border-[#2a2f38] rounded flex items-center gap-1"
                 title="Better auto layout (connection layers)"
@@ -2912,6 +3119,22 @@ function N8nlike() {
                 <LayoutDashboard className="w-3 h-3" /> Layout
               </button>
             </Panel>
+
+            {/* Node/Edge toolbar for #7 (visible when items selected) */}
+            {(selectedNodeIds.length > 0 || selectedEdgeIds.length > 0) && (
+              <Panel position="top-left" className="m-2 flex gap-1 bg-[#16181f] border border-[#2a2f38] rounded px-1 py-0.5 text-[10px] shadow">
+                {selectedNodeIds.length > 0 && (
+                  <>
+                    <button onClick={() => { pushToHistory(nodes, edges); setNodes(nds => (nds as any[]).filter(n => !selectedNodeIds.includes(n.id))); setSelectedNodeIds([]); }} className="px-1.5 py-0.5 hover:bg-red-950/40 text-red-400 rounded" title="Delete selected">Del</button>
+                    {selectedNodeIds.length > 1 && <button onClick={groupSelectedNodes} className="px-1.5 py-0.5 hover:bg-[#2a2f38] rounded" title="Group selected nodes">Group</button>}
+                  </>
+                )}
+                {selectedEdgeIds.length > 0 && (
+                  <button onClick={() => { setEdges(eds => (eds as any[]).filter(e => !selectedEdgeIds.includes(e.id))); setSelectedEdgeIds([]); }} className="px-1.5 py-0.5 hover:bg-red-950/40 text-red-400 rounded">Del Edge</button>
+                )}
+                <button onClick={() => { setSelectedNodeIds([]); setSelectedEdgeIds([]); }} className="px-1 py-0.5 text-[#8a909c] hover:text-white" title="Clear selection">×</button>
+              </Panel>
+            )}
           </ReactFlow>
 
           {/* Floating hint */}
@@ -3227,6 +3450,10 @@ function N8nlike() {
                 </div>
               </div>
               <div className="flex-1 overflow-auto p-2 text-xs space-y-1">
+                {/* Draft vs Published state indicator for #6 */}
+                <div className={`mb-2 px-2 py-0.5 rounded text-[10px] flex items-center gap-1 ${((workflow as any).isPublished) ? "bg-[#5c8df6]/20 text-[#5c8df6]" : "bg-[#f59e0b]/10 text-amber-400"}`}>
+                  {((workflow as any).isPublished) ? "📘 PUBLISHED (versioned snapshot)" : "✏️ DRAFT (editing)"} · { (workflow.versions || []).length } saved versions
+                </div>
                 {(!workflow.versions || workflow.versions.length === 0) && (
                   <div className="text-[#8a909c] p-2 text-center text-[10px]">
                     No versions yet.<br />Save (Ctrl/Cmd+S) to create history. Restore any time.
@@ -3241,12 +3468,21 @@ function N8nlike() {
                           <span className="font-medium">v{vnum}</span>
                           <span className="ml-2 text-[10px] text-[#8a909c]">{ver.name}</span>
                         </div>
-                        <button
-                          onClick={() => restoreVersion(ver)}
-                          className="px-1.5 py-0.5 bg-[#ff6d5a] hover:bg-[#f55c46] text-black rounded text-[10px] flex items-center gap-0.5"
-                        >
-                          <RotateCcw className="w-3 h-3" /> Restore
-                        </button>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => restoreVersion(ver)}
+                            className="px-1.5 py-0.5 bg-[#ff6d5a] hover:bg-[#f55c46] text-black rounded text-[10px] flex items-center gap-0.5"
+                          >
+                            <RotateCcw className="w-3 h-3" /> Restore
+                          </button>
+                          <button
+                            onClick={() => deleteVersion(ver)}
+                            className="px-1 py-0.5 text-red-400 hover:text-red-500 text-[10px]"
+                            title="Delete this version snapshot"
+                          >
+                            ×
+                          </button>
+                        </div>
                       </div>
                       <div className="text-[9px] text-[#8a909c] mt-0.5">{new Date(ver.savedAt).toLocaleString()} · {ver.nodes.length} nodes</div>
                     </div>

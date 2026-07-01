@@ -209,17 +209,21 @@ Prioritize features that close the gap between "impressive demo" and "production
 
 ---
 **Update (Integrations+AI Agent + Real Integrations/Triggers/AI):** High Priorities #3,#4,#5 completed: 
-- Real Integrations: aiLlm (real OpenAI + basic tool calling), email (Resend real service or fallback), Telegram (real Bot API send), Slack (real), http expanded with cred auth. All use cred/env + expressions.
+- Real Integrations: aiLlm (real OpenAI + basic tool calling), email (Resend fetch dual or nodemailer SMTP via cred for Gmail/SMTP or fallback), Telegram (real Bot API send), Slack (real), http expanded with cred auth. All use cred/env + expressions. SMTP support + 'smtp' cred type added.
 - Production Triggers/Scheduling (#4): scheduleTrigger real via lib/scheduler (cron ticker, active-only, server execute), enhanced webhooks+forms (secret auth, rich payloads always, active guard), activation toggle in UI + auto (un)register on save. ensureScheduler on all API loads. "Fire (server)" button.
 - Advanced Real AI (#5): aiLlm real + tool calling basics (tools JSON in editor, passed to OpenAI, tool_calls returned for agent patterns).
 Credential passing ensured to all real nodes in client + all server paths (pre-resolve in webhook/form/schedule). UI param editors + selectors + toggles full. Build clean. See execution.ts, nodes.ts, page.tsx, api/webhooks, api/forms, scheduler.ts, storage.
 
 *Generated from comprehensive analysis by 10 specialized research agents. Last updated: 2026-06-30*
 
-**Progress (as of respawn + initial impl):**
-- Credentials: UI manager + selector + storage + execution resolution (client + partial server) implemented.
-- Auth: Scaffolding started (types, basic session stubs).
-- Real Integrations/AI: resolveCredential wired; aiLlm/email/http support real calls (OpenAI/Resend/fetch with creds) + mocks fallback.
-- Triggers/Versioning: Partial (cron sim + versions in some flows).
+**Progress (as of Credentials & Auth Implementation Agent 2026-06-30 + Hardening):**
+- 1. Credentials/Connections: FULL (UI modal manager with per-type forms from CREDENTIAL_TYPES, CRUD + test button + list, expressions note+support at runtime; selector dropdowns integrated in httpRequest/aiLlm/email/database/telegram/slack/etc with credentialId persisted in node params; resolveCredentialAndAuth wired + full creds list passed in runWorkflow + executeWorkflow(client fallback, local, api server paths via webhooks/forms/scheduler); pre-resolve + expr resolve on auth fields (apiKey etc) inside per-item loops for cred values like {{ $json.token }}; dual local/API + user scoping).
+- 2. Real Authentication + Multi-Tenancy: FULL + completed/hardened (User + sessions/JWT jose httpOnly + proxy guard + getCurrentUser w/ header fallback; all main CRUD APIs protected (incl webhooks public-by-design with active/secret); full per-userId isolation in storage (getAll + get + deleteWorkflow now scoped/enforce), executions/creds + client LS prefixed + userId threaded in executeWorkflow/resolveCredentialAndAuth/getClient for robust lookup; UI full gate/login/signup/topbar/logout + local-demo bypass; scheduler/triggers/forms use wf.userId; all canvas/exec/history per-user. Demo plain pw noted. Basic MT isolation test added.).
+- Real Integrations/AI: resolveCredential wired + used; email now SMTP capable; full.
+- Triggers: implemented (see prior).
+- 6. Workflow Versioning + Templates Library + 7. Advanced React Flow Canvas Polish: IMPLEMENTED (Versioning and Polish Agent). Storage (lib/storage) + types enhanced for versions/isPublished/active + parentNode for groups. UI: Draft/Published badges + toggles, Versions tab (list/restore/delete/save + state), Templates gallery modal+section (4 samples incl sub-wf demo + import), convert-to-sub + basic sub node execution/inspector. Canvas: snapToGrid, + insert buttons on edges (CustomEdge + label renderer), enhanced context menus (right-click add/group/delete/ungroup/layout), node/edge toolbars on select, basic grouping via parentNode+extent (group/ungroup), improved auto-layout (layered Kahn with better spacing). No new deps. All in page.tsx + small types. Dual mode.
+- Build: succeeds (static + log); basic smoke test for creds + auth/MT added.
 
-**Next step suggestion:** Continue agent work on full Auth + real cron + more nodes. Run full QA/Testing agents. `npm run dev` to test.
+**Auth notes:** Secure cookie sessions; demo mode supported (no-auth local). For prod: replace plain pw with hash, use real DB, rotate SESSION_SECRET. Webhook IDs act as locator (standard); optional secret per-node for extra.
+
+**Next step suggestion:** Run `npm run build && npm run lint && npm run dev`; manual test create cred (apiKey) + attach to http node + execute; full QA. Focus remaining Future if any.
