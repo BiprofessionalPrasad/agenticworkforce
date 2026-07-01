@@ -250,7 +250,8 @@ export async function deleteCredential(id: string, userId?: string): Promise<boo
 // --- Users (for auth + multi-tenancy) ---
 // Stored as array for simplicity (demo)
 async function readUsers(): Promise<User & { password: string }[]> {
-  return readJsonFile<(User & { password: string })[]>(USERS_FILE, [] as any);
+  const def: (User & { password: string })[] = [];
+  return readJsonFile<(User & { password: string })[]>(USERS_FILE, def);
 }
 
 async function writeUsers(users: (User & { password: string })[]): Promise<void> {
